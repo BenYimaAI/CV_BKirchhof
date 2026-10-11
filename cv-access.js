@@ -55,10 +55,11 @@
   document.getElementById('dialogMailLink').href = mailto;
   const input = document.getElementById('accessPassword');
   const error = document.getElementById('accessError');
-  let granted = null, pending = null;
+  let granted = null, pending = null, pendingDestination = null;
   const modeFor = hash => hash === '#internal' ? 'internal' : hash.startsWith('#public') ? 'public' : null;
-  const showGate = mode => {
+  const showGate = (mode, destination) => {
     pending=mode;
+    pendingDestination = destination || '#'+mode;
     document.getElementById('accessTitle').textContent = mode==='internal'?'Leadership & Strategy access':'Public Portfolio access';
     input.value='';error.textContent='';
     if(!dialog.open)dialog.showModal();
@@ -72,9 +73,10 @@
     const mode=modeFor(location.hash);
     if(!mode){granted=null;document.body.dataset.cvAccess='';return;}
     if(granted!==mode){
+      const destination = location.hash;
       document.body.dataset.cvAccess='';
       history.replaceState(null,'',location.pathname+location.search+'#choose');
-      showGate(mode);
+      showGate(mode, destination);
     }
   }
   document.addEventListener('click',e=>{
@@ -85,7 +87,7 @@
     document.body.dataset.cvAccess='';
     if (location.hash !== '#choose') location.hash = '#choose';
     else history.replaceState(null,'',location.pathname+location.search+'#choose');
-    showGate(mode);
+    showGate(mode, a.getAttribute('href'));
   },true);
   document.getElementById('accessForm').addEventListener('submit',async e=>{
     e.preventDefault();
@@ -93,14 +95,16 @@
     if(!ok){error.textContent='Incorrect access code. Please try again.';input.focus();input.select();return;}
     granted=pending;
     document.body.dataset.cvAccess=granted;
-    const destination=granted;
+    const destination=pendingDestination || '#'+granted;
     pending=null;
+    pendingDestination=null;
     dialog.close();
-    location.hash='#'+destination;
+    location.hash=destination;
   });
   document.getElementById('cancelAccess').addEventListener('click',()=>dialog.close());
   dialog.addEventListener('close',()=>{
     pending=null;
+    pendingDestination=null;
     if(!granted){document.body.dataset.cvAccess='';history.replaceState(null,'',location.pathname+location.search+'#choose');}
   });
   input.addEventListener('input',()=>error.textContent='');
