@@ -1,26 +1,21 @@
 from pathlib import Path
-import sys
+import sys, shutil
 
-target = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
-target.mkdir(parents=True, exist_ok=True)
-html = Path("index.html").read_text(encoding="utf-8")
-tag = '<script src="cv-access.js"></script>'
-marker = '  <script>\n  (() => {'
-if tag not in html:
-    if marker not in html:
-        raise SystemExit("Original CV navigation script not found")
-    html = html.replace(marker, '  ' + tag + '\n' + marker, 1)
-html = html.replace("Concept H01</title>", "Concept H02</title>")
-html = html.replace("H01 / 11 OCT 2026", "H02 / 11 OCT 2026")
-html = html.replace(
-    "You can switch experiences at any time. Restricted material is not included in this concept preview.",
-    "Both experiences ask for a preview access code. Do not share confidential project data here."
-)
-html = html.replace(
-    "Secure access is not active in this prototype.",
-    "Preview access only. This is not secure authentication."
-)
-(target / "index.html").write_text(html, encoding="utf-8")
-(target / "cv-access.js").write_bytes(Path("cv-access.js").read_bytes())
-(target / ".nojekyll").touch()
-print("H02 site staged in", target)
+root = Path(__file__).resolve().parent.parent
+output = Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
+output.mkdir(parents=True, exist_ok=True)
+source = root / "index.html"
+html = source.read_text(encoding="utf-8")
+assert "H04.1" in html and 'id="portfolio" hidden' in html
+assert 'function guardHash()' in html and "const translations=" in html
+assets = ["present","factory","coach","visit","team","workshop","collab"]
+for name in assets:
+    original = root / "assets" / (name + ".webp")
+    assert original.exists() and original.stat().st_size > 1000, "Missing " + name
+    if output != root:
+        (output / "assets").mkdir(exist_ok=True)
+        shutil.copy2(original, output / "assets" / original.name)
+if output != root:
+    shutil.copy2(source, output / "index.html")
+(output / ".nojekyll").touch()
+print("H04.1 ready: multilingual portfolio and seven edited assets.")
