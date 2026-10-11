@@ -83,7 +83,8 @@
     if(!mode || granted===mode)return;
     e.preventDefault();
     document.body.dataset.cvAccess='';
-    history.replaceState(null,'',location.pathname+location.search+'#choose');
+    if (location.hash !== '#choose') location.hash = '#choose';
+    else history.replaceState(null,'',location.pathname+location.search+'#choose');
     showGate(mode);
   },true);
   document.getElementById('accessForm').addEventListener('submit',async e=>{
