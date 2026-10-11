@@ -1,0 +1,37 @@
+import { chromium } from 'playwright';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { resolve, dirname } from 'node:path';
+import { mkdir } from 'node:fs/promises';
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const url = pathToFileURL(resolve(root,'index.html')).href;
+const screenshotDir = resolve(root,'qa-evidence');
+await mkdir(screenshotDir,{recursive:true});
+const browser=await chromium.launch({headless:true});
+let problems=0;
+for(const [name,width,height] of [['mobile-narrow',320,720],['mobile',390,844],['tablet',768,1024],['desktop',1440,900]]) {
+ const page=await browser.newPage({viewport:{width,height}});
+ const errors=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(url);
+ const visible=selector=>page.locator(selector).isVisible();
+ if(!await visible('#view-choose') || await visible('#view-public') || await visible('#view-internal')) throw Error(name+': wrong initial route');
+ const checkWidth=async step=>{const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth);if(overflow)throw Error(name+': overflow at '+step);};
+ await checkWidth('chooser');
+ await page.screenshot({path:resolve(screenshotDir,name+'-chooser.png'),fullPage:true});
+ await page.getByRole('link',{name:'Enter public portfolio'}).click();
+ await page.locator('#view-public').waitFor({state:'visible'});
+ if(!await page.locator('#portrait').evaluate(el=>el.complete && el.naturalWidth>0))throw Error(name+': portrait not loaded');
+ await checkWidth('public');
+ await page.screenshot({path:resolve(screenshotDir,name+'-public.png'),fullPage:true});
+ await page.locator('#returnLink').click();
+ await page.locator('#view-choose').waitFor({state:'visible'});
+ await page.getByRole('link',{name:'Explore protected leadership and strategy access information'}).click();
+ await page.locator('#view-internal').waitFor({state:'visible'});
+ if(!await page.getByText('Secure access is not active in this prototype.',{exact:false}).isVisible())throw Error(name+': missing restriction statement');
+ await checkWidth('internal');
+ if(errors.length)throw Error(name+': JavaScript errors '+errors.join(' | '));
+ await page.screenshot({path:resolve(screenshotDir,name+'-leadership.png'),fullPage:true});
+ await page.close();
+ console.log(name+' PASS');
+}
+await browser.close();
