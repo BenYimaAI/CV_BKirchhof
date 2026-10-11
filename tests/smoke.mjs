@@ -53,6 +53,15 @@ for(const [name,width,height] of [['mobile-narrow',320,720],['mobile',390,844],[
  await direct.locator('#accessDialog').waitFor({state:'visible'});
  if(await direct.locator('#view-internal').isVisible())throw Error(name+': direct URL bypasses gate');
  await direct.close();
+ const deep=await browser.newPage({viewport:{width,height}});
+ await deep.goto(url+'#public-ai');
+ await deep.locator('#accessDialog').waitFor({state:'visible'});
+ if(await deep.locator('#ai').isVisible())throw Error(name+': AI deep link not gated');
+ await deep.locator('#accessPassword').fill(String.fromCharCode(112,97,115,115,119,111,114,100));
+ await deep.locator('#accessForm button[type=submit]').click();
+ await deep.locator('#ai').waitFor({state:'visible'});
+ if (!deep.url().includes('#public-ai'))throw Error(name+': deep link lost after access');
+ await deep.close();
  if(errors.length)throw Error(name+': script errors '+errors.join(' | '));
  await page.close();
  console.log(name+' PASS');
