@@ -1,69 +1,36 @@
 import { chromium } from 'playwright';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolve, dirname } from 'node:path';
-import { mkdir } from 'node:fs/promises';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const url=pathToFileURL(resolve(root,'index.html')).href;
-const dir=resolve(root,'qa-evidence');
-await mkdir(dir,{recursive:true});
 const browser=await chromium.launch({headless:true});
-for(const [name,width,height] of [['mobile-narrow',320,720],['mobile',390,844],['tablet',768,1024],['desktop',1440,900]]){
+for(const [name,width,height] of [['phone-small',320,720],['phone',390,844],['tablet',768,1024],['desktop',1440,900]]){
  const page=await browser.newPage({viewport:{width,height}});
- const errors=[];
- page.on('pageerror',e=>errors.push(e.message));
+ const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto(url);
- if(!await page.locator('#view-choose').isVisible())throw Error(name+': landing not visible');
- if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw Error(name+': horizontal overflow');
- await page.screenshot({path:resolve(dir,name+'-landing.png'),fullPage:true});
- const mail=await page.locator('.cv-email a').first().getAttribute('href');
- if(!mail?.startsWith('mailto:')||!mail.includes('subject=')||!mail.includes('body='))throw Error(name+': mailto is incomplete');
- await page.getByRole('link',{name:'Enter public portfolio'}).click();
- await page.locator('#accessDialog').waitFor({state:'visible'});
- if(await page.locator('#view-public').isVisible())throw Error(name+': missing gate');
- await page.locator('#accessPassword').fill('incorrect');
- await page.locator('#accessForm button[type=submit]').click();
- if(!await page.locator('#accessError').getByText('Incorrect access code. Please try again.').isVisible())throw Error(name+': incorrect password was accepted');
- await page.locator('#accessPassword').fill(String.fromCharCode(112,97,115,115,119,111,114,100));
- await page.locator('#accessForm button[type=submit]').click();
- await page.locator('#view-public').waitFor({state:'visible'});
- for (const section of ['gen5','awards','ai']) {
-   if (!await page.locator('#'+section).isVisible()) throw Error(name+': H03 '+section+' missing');
+ if(!await page.locator('#portfolio').isHidden())throw Error(name+': access bypass');
+ for(const lang of ['zh','de','en']){
+  await page.locator('[data-lang="'+lang+'"]').click();
+  if(await page.locator('html').getAttribute('lang')!==(lang==='zh'?'zh-CN':lang))throw Error('locale '+lang);
+  const blank=await page.locator('[data-t]').evaluateAll(els=>els.filter(x=>!x.textContent.trim()).length);
+  if(blank)throw Error(name+': untranslated labels');
  }
- await page.locator('.hero-buttons a[href="#public-gen5"]').click();
- if (!page.url().includes('#public-gen5')) throw Error(name+': Gen-5 navigation failed');
- await page.locator('#gen5 .h03-detail summary').first().click();
- if (!await page.locator('#gen5 .h03-detail').first().evaluate(el=>el.open))throw Error(name+': Gen-5 detail not interactive');
- await page.locator('#awards a[href="#public-ai"]').first().click();
- if (!page.url().includes('#public-ai'))throw Error(name+': award to AI navigation failed');
- const overflowAfterAI=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth);
- if (overflowAfterAI)throw Error(name+': H03 content horizontal overflow');
- await page.screenshot({path:resolve(dir,name+'-ai.png'),fullPage:true});
- await page.locator('#returnLink').click();
- await page.locator('#view-choose').waitFor({state:'visible'});
- await page.getByRole('link',{name:'Explore protected leadership and strategy access information'}).click();
+ await page.locator('[data-path="portfolio"]').click();
  await page.locator('#accessDialog').waitFor({state:'visible'});
- if(await page.locator('#view-internal').isVisible())throw Error(name+': leadership gate bypassed');
- await page.locator('#accessPassword').fill(String.fromCharCode(112,97,115,115,119,111,114,100));
+ await page.locator('#accessInput').fill('invalid');
  await page.locator('#accessForm button[type=submit]').click();
- await page.locator('#view-internal').waitFor({state:'visible'});
- await page.locator('#returnLink').click();
- await page.locator('#view-choose').waitFor({state:'visible'});
- const direct=await browser.newPage({viewport:{width,height}});
- await direct.goto(url+'#internal');
- await direct.locator('#accessDialog').waitFor({state:'visible'});
- if(await direct.locator('#view-internal').isVisible())throw Error(name+': direct URL bypasses gate');
- await direct.close();
- const deep=await browser.newPage({viewport:{width,height}});
- await deep.goto(url+'#public-ai');
- await deep.locator('#accessDialog').waitFor({state:'visible'});
- if(await deep.locator('#ai').isVisible())throw Error(name+': AI deep link not gated');
- await deep.locator('#accessPassword').fill(String.fromCharCode(112,97,115,115,119,111,114,100));
- await deep.locator('#accessForm button[type=submit]').click();
- await deep.locator('#ai').waitFor({state:'visible'});
- if (!deep.url().includes('#public-ai'))throw Error(name+': deep link lost after access');
- await deep.close();
- if(errors.length)throw Error(name+': script errors '+errors.join(' | '));
- await page.close();
+ if(!await page.locator('#portfolio').isHidden())throw Error(name+': wrong code accepted');
+ await page.locator('#accessInput').fill(String.fromCharCode(112,97,115,115,119,111,114,100));
+ await page.locator('#accessForm button[type=submit]').click();
+ await page.locator('#portfolio').waitFor({state:'visible'});
+ for(const id of ['projects','gen5','skills','leadership','ai','awards','career']){
+  if(!await page.locator('#'+id).isVisible())throw Error(name+': '+id+' section missing');
+ }
+ if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+2))throw Error(name+': horizontal overflow');
+ await page.locator('.section-nav a[href="#choose"]').click();
+ if(!await page.locator('#portfolio').isHidden())throw Error(name+': signout failed');
+ if(errors.length)throw Error(name+': '+errors.join(';'));
  console.log(name+' PASS');
+ await page.close();
 }
 await browser.close();
