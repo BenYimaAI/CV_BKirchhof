@@ -22,7 +22,7 @@ for(const [name,width,height] of [['mobile-narrow',320,720],['mobile',390,844],[
  if(await page.locator('#view-public').isVisible())throw Error(name+': missing gate');
  await page.locator('#accessPassword').fill('incorrect');
  await page.locator('#accessForm button[type=submit]').click();
- if(!await page.locator('#accessError').isVisible())throw Error(name+': wrong-password feedback absent');
+ if(!await page.locator('#accessError').getByText('Incorrect access code. Please try again.').isVisible())throw Error(name+': incorrect password was accepted');
  await page.locator('#accessPassword').fill(String.fromCharCode(112,97,115,115,119,111,114,100));
  await page.locator('#accessForm button[type=submit]').click();
  await page.locator('#view-public').waitFor({state:'visible'});
@@ -36,6 +36,11 @@ for(const [name,width,height] of [['mobile-narrow',320,720],['mobile',390,844],[
  await page.locator('#view-internal').waitFor({state:'visible'});
  await page.locator('#returnLink').click();
  await page.locator('#view-choose').waitFor({state:'visible'});
+ const direct=await browser.newPage({viewport:{width,height}});
+ await direct.goto(url+'#internal');
+ await direct.locator('#accessDialog').waitFor({state:'visible'});
+ if(await direct.locator('#view-internal').isVisible())throw Error(name+': direct URL bypasses gate');
+ await direct.close();
  if(errors.length)throw Error(name+': script errors '+errors.join(' | '));
  await page.close();
  console.log(name+' PASS');
