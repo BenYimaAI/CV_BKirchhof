@@ -17,6 +17,8 @@ jobs:
         run: |
           npm install --no-save --package-lock=false playwright@1.56.1
           npx playwright install --with-deps chromium
+      - name: Build CV preview with access dialog
+        run: python3 scripts/prepare_site.py .
       - name: Run interactive smoke tests
         run: node tests/smoke.mjs
       - uses: actions/upload-artifact@v4
