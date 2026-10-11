@@ -19,14 +19,14 @@ for(const [name,width,height] of [['mobile-narrow',320,720],['mobile',390,844],[
  await checkWidth('chooser');
  await page.screenshot({path:resolve(screenshotDir,name+'-chooser.png'),fullPage:true});
  await page.getByRole('link',{name:'Enter public portfolio'}).click();
- if(!await visible('#view-public'))throw Error(name+': public route failed');
+ await page.locator('#view-public').waitFor({state:'visible'});
  if(!await page.locator('#portrait').evaluate(el=>el.complete && el.naturalWidth>0))throw Error(name+': portrait not loaded');
  await checkWidth('public');
  await page.screenshot({path:resolve(screenshotDir,name+'-public.png'),fullPage:true});
  await page.locator('#returnLink').click();
- if(!await visible('#view-choose')) throw Error(name+': return failed');
+ await page.locator('#view-choose').waitFor({state:'visible'});
  await page.getByRole('link',{name:'Explore protected leadership and strategy access information'}).click();
- if(!await visible('#view-internal'))throw Error(name+': leadership info route failed');
+ await page.locator('#view-internal').waitFor({state:'visible'});
  if(!await page.getByText('Secure access is not active in this prototype.',{exact:false}).isVisible())throw Error(name+': missing restriction statement');
  await checkWidth('internal');
  if(errors.length)throw Error(name+': JavaScript errors '+errors.join(' | '));
