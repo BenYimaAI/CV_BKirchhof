@@ -17,9 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Prepare public-only output
         run: |
-          mkdir public-site
-          cp index.html public-site/index.html
-          touch public-site/.nojekyll
+          python3 scripts/prepare_site.py public-site
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:
