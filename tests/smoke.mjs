@@ -26,6 +26,18 @@ for(const [name,width,height] of [['mobile-narrow',320,720],['mobile',390,844],[
  await page.locator('#accessPassword').fill(String.fromCharCode(112,97,115,115,119,111,114,100));
  await page.locator('#accessForm button[type=submit]').click();
  await page.locator('#view-public').waitFor({state:'visible'});
+ for (const section of ['gen5','awards','ai']) {
+   if (!await page.locator('#'+section).isVisible()) throw Error(name+': H03 '+section+' missing');
+ }
+ await page.locator('.hero-buttons a[href="#public-gen5"]').click();
+ if (!page.url().includes('#public-gen5')) throw Error(name+': Gen-5 navigation failed');
+ await page.locator('#gen5 .h03-detail summary').first().click();
+ if (!await page.locator('#gen5 .h03-detail').first().evaluate(el=>el.open))throw Error(name+': Gen-5 detail not interactive');
+ await page.locator('#awards a[href="#public-ai"]').first().click();
+ if (!page.url().includes('#public-ai'))throw Error(name+': award to AI navigation failed');
+ const overflowAfterAI=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth);
+ if (overflowAfterAI)throw Error(name+': H03 content horizontal overflow');
+ await page.screenshot({path:resolve(dir,name+'-ai.png'),fullPage:true});
  await page.locator('#returnLink').click();
  await page.locator('#view-choose').waitFor({state:'visible'});
  await page.getByRole('link',{name:'Explore protected leadership and strategy access information'}).click();
@@ -41,6 +53,15 @@ for(const [name,width,height] of [['mobile-narrow',320,720],['mobile',390,844],[
  await direct.locator('#accessDialog').waitFor({state:'visible'});
  if(await direct.locator('#view-internal').isVisible())throw Error(name+': direct URL bypasses gate');
  await direct.close();
+ const deep=await browser.newPage({viewport:{width,height}});
+ await deep.goto(url+'#public-ai');
+ await deep.locator('#accessDialog').waitFor({state:'visible'});
+ if(await deep.locator('#ai').isVisible())throw Error(name+': AI deep link not gated');
+ await deep.locator('#accessPassword').fill(String.fromCharCode(112,97,115,115,119,111,114,100));
+ await deep.locator('#accessForm button[type=submit]').click();
+ await deep.locator('#ai').waitFor({state:'visible'});
+ if (!deep.url().includes('#public-ai'))throw Error(name+': deep link lost after access');
+ await deep.close();
  if(errors.length)throw Error(name+': script errors '+errors.join(' | '));
  await page.close();
  console.log(name+' PASS');
