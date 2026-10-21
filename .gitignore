@@ -1,3 +1,6 @@
 node_modules/
 qa-evidence/
 .DS_Store
+public-site/
+content/private/
+.access-secret

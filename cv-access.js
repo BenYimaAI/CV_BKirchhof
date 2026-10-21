@@ -1,113 +1,261 @@
 (() => {
   'use strict';
-  // UX gate only. This does not secure static site source or hosted HTML.
-  const digest = '5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8';
-  const mailto = 'mailto:Benjamin.kapp@mercedes-benz.com?subject=' +
-    encodeURIComponent('Request for interactive CV access - Benjamin Kapp Kirchhof') +
-    '&body=' + encodeURIComponent('Hello Benjamin,\n\nI would like to request the access code for your interactive CV portfolio. Please send me the details when convenient.\n\nThank you and kind regards,\nA prospective visitor');
-  const style = document.createElement('style');
-  style.textContent = `
-    body:not([data-cv-access="public"]) #view-public,
-    body:not([data-cv-access="internal"]) #view-internal{visibility:hidden!important}
-    .cv-email{font-size:.9rem;color:#55686b;line-height:1.6;margin:20px 0 0}
-    .cv-email a,.cv-gate a{color:#876132;text-decoration:underline;text-underline-offset:4px}
-    .cv-gate{width:min(445px,calc(100vw - 32px));max-height:calc(100dvh - 36px);overflow:auto;
-       padding:clamp(22px,5vw,34px);border:1px solid #d3dfd8;border-radius:20px;
-       background:#fff;color:#17252e;box-shadow:0 22px 80px #0a192a55;margin:auto}
-    .cv-gate::backdrop{background:#061622b8;backdrop-filter:blur(4px)}
-    .cv-gate h2{font-family:Georgia,serif;font-weight:400;font-size:clamp(1.9rem,5vw,2.45rem);line-height:1.1;margin:10px 0 15px}
-    .cv-gate p{line-height:1.5;font-size:.91rem;color:#51636a}
-    .cv-gate label{display:block;font-weight:700;margin:21px 0 8px}
-    .cv-gate input{display:block;width:100%;padding:14px;font:inherit;min-height:50px;border:1px solid #b1c2c1;border-radius:10px}
-    .cv-gate input:focus{outline:3px solid #dabf88;outline-offset:2px}
-    .cv-gate-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
-    .cv-gate-actions button{flex:1;justify-content:center}
-    .cv-gate-error{color:#a0303a!important;min-height:1.3em;margin:7px 0 0}
-    .cv-gate .cv-gate-note{color:#78868b;font-size:.74rem;margin:12px 0 0}
-  `;
-  document.head.append(style);
-  const email = document.createElement('p');
-  email.className = 'cv-email';
-  const requestLink = document.createElement('a');
-  requestLink.href = mailto;
-  requestLink.textContent = 'Request the access code by email ↗';
-  email.append('Need access? ',requestLink);
-  document.querySelector('#view-choose .choose-wrap').append(email);
 
-  const dialog = document.createElement('dialog');
-  dialog.id = 'accessDialog';dialog.className = 'cv-gate';
-  dialog.setAttribute('aria-labelledby','accessTitle');
-  dialog.innerHTML = `
-    <h2 id="accessTitle">Portfolio access</h2>
-    <p>Enter the access code shared by Benjamin to continue.</p>
-    <form id="accessForm">
-      <label for="accessPassword">Access code</label>
-      <input id="accessPassword" type="password" autocomplete="off" required>
-      <p class="cv-gate-error" id="accessError" aria-live="polite"></p>
-      <div class="cv-gate-actions">
-        <button type="submit" class="btn">Continue →</button>
-        <button type="button" class="btn secondary" id="cancelAccess">Cancel</button>
-      </div>
-    </form>
-    <p class="cv-email"><a id="dialogMailLink">Request the access code ↗</a></p>
-    <p class="cv-gate-note">This preview access gate is not a security control for sensitive information.</p>`;
-  document.body.append(dialog);
-  document.getElementById('dialogMailLink').href = mailto;
-  const input = document.getElementById('accessPassword');
-  const error = document.getElementById('accessError');
-  let granted = null, pending = null, pendingDestination = null;
-  const modeFor = hash => hash === '#internal' ? 'internal' : hash.startsWith('#public') ? 'public' : null;
-  const showGate = (mode, destination) => {
-    pending=mode;
-    pendingDestination = destination || '#'+mode;
-    document.getElementById('accessTitle').textContent = mode==='internal'?'Leadership & Strategy access':'Public Portfolio access';
-    input.value='';error.textContent='';
-    if(!dialog.open)dialog.showModal();
-    input.focus();
+  // Decrypts the three registers in the browser. The access code is not in
+  // this file. private/registers.enc.json holds AES-256-GCM ciphertext only.
+  const AAD = 'cv-private-v1';
+  const VAULT = 'private/registers.enc.json';
+  const MIN_ITERATIONS = 100000;
+  const MAX_ITERATIONS = 2000000;
+
+  const copyNode = document.getElementById('publicCopy');
+  const translations = copyNode ? JSON.parse(copyNode.textContent) : {};
+  let currentLang = localStorage.getItem('cv_lang') || 'en';
+  if (!translations[currentLang]) currentLang = 'en';
+  let pendingRoute = null;
+  let returnFocus = null;
+  let operation = 0;
+  let privateKeys = [];
+  let vaultPromise = null;
+
+  const routeMeta = {
+    cv: {labelKey: 'pathCV', accent: ['var(--cv1)', 'var(--cv2)']},
+    projects: {labelKey: 'pathProj', accent: ['var(--proj1)', 'var(--proj2)']},
+    private: {labelKey: 'pathPriv', accent: ['var(--priv1)', 'var(--priv2)']}
   };
-  async function verify(text){
-    const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text));
-    return Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join('')===digest;
+
+  const input = document.getElementById('pwdInput');
+  const error = document.getElementById('pwdError');
+  const status = document.getElementById('pwdStatus');
+  const openBtn = document.getElementById('openBtn');
+  const dialog = document.getElementById('dialog');
+
+  function t(key) {
+    return (translations[currentLang] && translations[currentLang][key]) || key;
   }
-  function guardRoute(){
-    const mode=modeFor(location.hash);
-    if(!mode){granted=null;document.body.dataset.cvAccess='';return;}
-    if(granted!==mode){
-      const destination = location.hash;
-      document.body.dataset.cvAccess='';
-      history.replaceState(null,'',location.pathname+location.search+'#choose');
-      showGate(mode, destination);
+
+  function b64ToBytes(value) {
+    const bin = atob(value);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  function loadVault() {
+    if (!vaultPromise) {
+      vaultPromise = fetch(new URL(VAULT, document.baseURI), {cache: 'no-store'}).then((response) => {
+        if (!response.ok) throw Object.assign(new Error('load'), {code: 'unavailable'});
+        return response.json();
+      }).catch((cause) => {
+        vaultPromise = null;
+        if (cause && cause.code === 'unavailable') throw cause;
+        throw Object.assign(new Error('load'), {code: 'unavailable'});
+      });
+    }
+    return vaultPromise;
+  }
+
+  async function decryptVault(code) {
+    const vault = await loadVault();
+    const iterations = vault.iterations;
+    if (vault.version !== 1 || vault.kdf !== 'PBKDF2-SHA-256' || vault.aad !== AAD) {
+      throw Object.assign(new Error('vault'), {code: 'unavailable'});
+    }
+    if (!Number.isInteger(iterations) || iterations < MIN_ITERATIONS || iterations > MAX_ITERATIONS) {
+      throw Object.assign(new Error('vault'), {code: 'unavailable'});
+    }
+    const salt = b64ToBytes(vault.salt);
+    const iv = b64ToBytes(vault.iv);
+    const ciphertext = b64ToBytes(vault.ciphertext);
+    const baseKey = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(code),
+      'PBKDF2',
+      false,
+      ['deriveKey']
+    );
+    const key = await crypto.subtle.deriveKey(
+      {name: 'PBKDF2', salt, iterations, hash: 'SHA-256'},
+      baseKey,
+      {name: 'AES-GCM', length: 256},
+      false,
+      ['decrypt']
+    );
+    let plain;
+    try {
+      plain = await crypto.subtle.decrypt(
+        {name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(AAD)},
+        key,
+        ciphertext
+      );
+    } catch {
+      throw Object.assign(new Error('auth'), {code: 'rejected'});
+    }
+    const payload = JSON.parse(new TextDecoder().decode(plain));
+    if (!payload.views || !payload.views.cv || !payload.views.projects || !payload.views.private) {
+      throw Object.assign(new Error('shape'), {code: 'unavailable'});
+    }
+    return payload;
+  }
+
+  function mergePrivate(table) {
+    privateKeys = [];
+    for (const [lang, entries] of Object.entries(table || {})) {
+      translations[lang] = translations[lang] || {};
+      for (const [key, value] of Object.entries(entries)) {
+        translations[lang][key] = value;
+        if (!privateKeys.includes(key)) privateKeys.push(key);
+      }
     }
   }
-  document.addEventListener('click',e=>{
-    const a=e.target.closest('a[href]');
-    const mode=a&&modeFor(a.getAttribute('href')||'');
-    if(!mode || granted===mode)return;
-    e.preventDefault();
-    document.body.dataset.cvAccess='';
-    if (location.hash !== '#choose') location.hash = '#choose';
-    else history.replaceState(null,'',location.pathname+location.search+'#choose');
-    showGate(mode, a.getAttribute('href'));
-  },true);
-  document.getElementById('accessForm').addEventListener('submit',async e=>{
-    e.preventDefault();
-    const ok=await verify(input.value);
-    if(!ok){error.textContent='Incorrect access code. Please try again.';input.focus();input.select();return;}
-    granted=pending;
-    document.body.dataset.cvAccess=granted;
-    const destination=pendingDestination || '#'+granted;
-    pending=null;
-    pendingDestination=null;
-    dialog.close();
-    location.hash=destination;
+
+  function dropPrivate() {
+    for (const lang of Object.keys(translations)) {
+      for (const key of privateKeys) delete translations[lang][key];
+    }
+    privateKeys = [];
+  }
+
+  function clearRegisters() {
+    const mount = document.getElementById('registerMount');
+    if (mount) mount.textContent = '';
+    dropPrivate();
+  }
+
+  function mountRegisters(views) {
+    const mount = document.getElementById('registerMount');
+    mount.innerHTML = views.cv + views.projects + views.private;
+  }
+
+  function applyLang(lang) {
+    if (!translations[lang]) return;
+    currentLang = lang;
+    localStorage.setItem('cv_lang', lang);
+    document.documentElement.lang = lang === 'zh' ? 'zh-CN' : lang;
+    document.querySelectorAll('[data-t]').forEach((el) => {
+      const key = el.dataset.t;
+      if (translations[lang][key]) el.textContent = translations[lang][key];
+    });
+    document.querySelectorAll('[data-ph]').forEach((el) => {
+      const key = el.dataset.ph;
+      if (translations[lang][key]) el.placeholder = translations[lang][key];
+    });
+    document.querySelectorAll('[data-lang]').forEach((button) => {
+      button.classList.toggle('active', button.dataset.lang === lang);
+    });
+    const subject = encodeURIComponent('Request access code for Benjamin Kirchhof portfolio');
+    const body = encodeURIComponent('Hello Benjamin,\r\n\r\nI would like to request the access code for your protected portfolio.\r\nRequested register(s): CV / Motivation, Projects / Achievements, Private Life / Hobbies\r\n\r\nThank you.');
+    const mail = document.getElementById('requestAccessLink');
+    if (mail) mail.href = `mailto:Benjamin.kapp@mercedes-benz.com?subject=${subject}&body=${body}`;
+    const tag = document.getElementById('activeRegisterTag');
+    if (tag && tag.dataset.route && routeMeta[tag.dataset.route]) {
+      tag.textContent = translations[lang][routeMeta[tag.dataset.route].labelKey];
+    }
+  }
+
+  function setBusy(busy) {
+    openBtn.disabled = busy;
+    input.disabled = busy;
+    openBtn.textContent = busy ? t('pwdWorking') : t('pwdButton');
+    if (status) status.textContent = busy ? t('pwdWorking') : '';
+  }
+
+  function openDialog(route, trigger) {
+    pendingRoute = route;
+    returnFocus = trigger || document.activeElement;
+    dialog.classList.add('show');
+    dialog.setAttribute('aria-hidden', 'false');
+    input.value = '';
+    error.textContent = '';
+    if (status) status.textContent = '';
+    openBtn.style.background = `linear-gradient(90deg,${routeMeta[route].accent[0]},${routeMeta[route].accent[1]})`;
+    setTimeout(() => input.focus(), 60);
+  }
+
+  function closeDialog() {
+    operation += 1;
+    setBusy(false);
+    dialog.classList.remove('show');
+    dialog.setAttribute('aria-hidden', 'true');
+    input.value = '';
+  }
+
+  function showRoute(route) {
+    document.getElementById('protectedArea').hidden = false;
+    document.querySelectorAll('.regView').forEach((view) => view.classList.remove('active'));
+    document.getElementById('view-' + route).classList.add('active');
+    const tag = document.getElementById('activeRegisterTag');
+    tag.dataset.route = route;
+    tag.textContent = translations[currentLang][routeMeta[route].labelKey];
+    document.getElementById('protectedArea').scrollIntoView({behavior: 'smooth', block: 'start'});
+    const back = document.getElementById('backHome');
+    if (back) back.focus();
+  }
+
+  function backHome() {
+    operation += 1;
+    document.getElementById('protectedArea').hidden = true;
+    clearRegisters();
+    const tag = document.getElementById('activeRegisterTag');
+    if (tag) delete tag.dataset.route;
+    document.getElementById('gateway').scrollIntoView({behavior: 'smooth', block: 'start'});
+  }
+
+  document.querySelectorAll('[data-lang]').forEach((button) => {
+    button.addEventListener('click', () => applyLang(button.dataset.lang));
   });
-  document.getElementById('cancelAccess').addEventListener('click',()=>dialog.close());
-  dialog.addEventListener('close',()=>{
-    pending=null;
-    pendingDestination=null;
-    if(!granted){document.body.dataset.cvAccess='';history.replaceState(null,'',location.pathname+location.search+'#choose');}
+  document.querySelectorAll('[data-route]').forEach((button) => {
+    button.addEventListener('click', () => openDialog(button.dataset.route, button));
   });
-  input.addEventListener('input',()=>error.textContent='');
-  window.addEventListener('hashchange',guardRoute);
-  guardRoute();
+  document.getElementById('cancelBtn').addEventListener('click', () => {
+    closeDialog();
+    if (returnFocus && returnFocus.focus) returnFocus.focus();
+  });
+  document.getElementById('backHome').addEventListener('click', backHome);
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) {
+      closeDialog();
+      if (returnFocus && returnFocus.focus) returnFocus.focus();
+    }
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') openBtn.click();
+  });
+  input.addEventListener('input', () => {
+    error.textContent = '';
+  });
+
+  openBtn.addEventListener('click', async () => {
+    const code = input.value.trim();
+    const route = pendingRoute;
+    if (!code || !route) {
+      error.textContent = t('pwdError');
+      input.focus();
+      return;
+    }
+    const token = operation + 1;
+    operation = token;
+    setBusy(true);
+    error.textContent = '';
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    if (token !== operation) return;
+    try {
+      const payload = await decryptVault(code);
+      if (token !== operation) return;
+      clearRegisters();
+      mergePrivate(payload.translations);
+      mountRegisters(payload.views);
+      applyLang(currentLang);
+      closeDialog();
+      showRoute(route);
+    } catch (cause) {
+      if (token !== operation) return;
+      setBusy(false);
+      error.textContent = cause && cause.code === 'unavailable' ? t('pwdUnavailable') : t('pwdError');
+      input.focus();
+      input.select();
+    }
+  });
+
+  applyLang(currentLang);
 })();
