@@ -15,9 +15,20 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare public-only output
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Confirm the access secret still opens the registers
+        env:
+          CV_ACCESS_SECRET: ${{ secrets.CV_ACCESS_SECRET }}
         run: |
-          python3 scripts/prepare_site.py public-site
+          if [ -z "$CV_ACCESS_SECRET" ]; then
+            echo "::warning title=CV_ACCESS_SECRET is not set::Ciphertext will still deploy. Add the Actions secret so this workflow can confirm the access code decrypts the registers. See the README."
+          else
+            node scripts/private_vault.mjs verify
+          fi
+      - name: Prepare public output
+        run: python3 scripts/prepare_site.py public-site
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:

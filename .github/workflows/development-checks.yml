@@ -13,20 +13,35 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Crypto round-trip
+        run: node tests/vault-roundtrip.mjs
+      - name: Verify access secret when it is configured
+        env:
+          CV_ACCESS_SECRET: ${{ secrets.CV_ACCESS_SECRET }}
+        run: |
+          if [ -n "$CV_ACCESS_SECRET" ]; then
+            node scripts/private_vault.mjs verify
+          else
+            echo "CV_ACCESS_SECRET is not set; decrypt verification skipped."
+          fi
+      - name: Build the public site
+        run: python3 scripts/prepare_site.py public-site
       - name: Install browser-test runner
         run: |
           npm install --no-save --package-lock=false playwright@1.56.1
           npx playwright install --with-deps chromium
-      - name: Build CV preview with access dialog
-        run: python3 scripts/prepare_site.py .
       - name: Run interactive smoke tests
-        run: node tests/smoke.mjs
+        env:
+          CV_ACCESS_SECRET: ${{ secrets.CV_ACCESS_SECRET }}
+        run: node tests/smoke.mjs public-site
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: cv-development-preview
           path: |
             index.html
+            cv-access.js
+            private/registers.enc.json
             docs/
             qa-evidence/
           if-no-files-found: warn
