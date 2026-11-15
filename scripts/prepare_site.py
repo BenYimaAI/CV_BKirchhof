@@ -5,10 +5,14 @@ The output directory receives only:
   cv-access.js
   private/registers.enc.json
   .nojekyll
+  assets/studies/*.webp          personal component illustrations
+  assets/fonts/*                 self-hosted UI fonts and their licenses
 
 Register HTML, register translations, and the access code are refused.
+The battery study is the exploded view without the upper housing cover.
 """
 from pathlib import Path
+import re
 import shutil
 import sys
 
@@ -52,6 +56,24 @@ REQUIRED = (
     'id="publicCopy"',
     "cv-access.js",
     "PBKDF2",
+)
+STUDIES = (
+    "assets/studies/m177-crankcase.webp",
+    "assets/studies/m276-crankcase.webp",
+    "assets/studies/om642-crankcase.webp",
+    "assets/studies/hv-battery-exploded.webp",
+    "assets/studies/mma-battery-4module.webp",
+    "assets/studies/eats-20-cutaway.webp",
+    "assets/studies/mma-rear-edu.webp",
+)
+FONTS = (
+    "assets/fonts/outfit-400.woff2",
+    "assets/fonts/outfit-500.woff2",
+    "assets/fonts/outfit-600.woff2",
+    "assets/fonts/ibm-plex-mono-400.woff2",
+    "assets/fonts/ibm-plex-mono-500.woff2",
+    "assets/fonts/Outfit-OFL.txt",
+    "assets/fonts/IBMPlexMono-OFL.txt",
 )
 
 
@@ -98,6 +120,11 @@ def main():
     for key in REQUIRED:
         if key not in index and key not in script:
             fail("Public shell is missing " + key)
+    referenced = set(re.findall(r"assets/studies/[a-z0-9-]+\.webp", index))
+    if referenced != set(STUDIES):
+        fail("Illustration allowlist does not match index.html: " + ", ".join(sorted(referenced.symmetric_difference(STUDIES))))
+    if "04_" in index or "ohne_Deckel" in index or "mit_Deckel" in index:
+        fail("index.html references a source battery filename instead of the published study")
     scan("index.html", index)
     scan("cv-access.js", script)
     scan("private/registers.enc.json", vault)
@@ -109,6 +136,13 @@ def main():
     (out / "cv-access.js").write_text(script, encoding="utf-8")
     (out / "private" / "registers.enc.json").write_text(vault, encoding="utf-8")
     (out / ".nojekyll").touch()
+    for rel in STUDIES + FONTS:
+        src = ROOT / rel
+        if not src.is_file() or src.stat().st_size < 40:
+            fail("Missing public asset " + rel)
+        dest = out / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dest)
 
     published = []
     for path in out.rglob("*"):
@@ -116,7 +150,7 @@ def main():
             published.append(path.relative_to(out).as_posix())
             if path.suffix in {".html", ".js", ".json", ".txt", ".md"} or path.name == ".nojekyll":
                 scan(path.relative_to(out).as_posix(), path.read_text(encoding="utf-8"))
-    expected = {"index.html", "cv-access.js", "private/registers.enc.json", ".nojekyll"}
+    expected = {"index.html", "cv-access.js", "private/registers.enc.json", ".nojekyll", *STUDIES, *FONTS}
     if set(published) != expected:
         fail("Public bundle has unexpected files: " + ", ".join(sorted(published)))
     print("Prepared public site with encrypted registers only.")

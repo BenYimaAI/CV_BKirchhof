@@ -14,7 +14,9 @@ function start(root) {
     '.html': 'text/html; charset=utf-8',
     '.js': 'text/javascript; charset=utf-8',
     '.json': 'application/json; charset=utf-8',
-    '.webp': 'image/webp'
+    '.webp': 'image/webp',
+    '.woff2': 'font/woff2',
+    '.txt': 'text/plain; charset=utf-8'
   };
   const server = createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
@@ -75,8 +77,28 @@ try {
     const fontSize = await page.locator('#pwdInput').evaluate((el) => getComputedStyle(el).fontSize);
     if (parseFloat(fontSize) < 16) throw new Error(label + ': access input is below 16px');
 
+    const studyEnglish = (await page.locator('[data-t="studyLead"]').innerText()).trim();
+    await page.locator('[data-lang="de"]').click();
+    const studyGerman = (await page.locator('[data-t="studyLead"]').innerText()).trim();
+    await page.locator('[data-lang="zh"]').click();
+    const studyChinese = (await page.locator('[data-t="studyLead"]').innerText()).trim();
+    await page.locator('[data-lang="en"]').click();
+    if (studyGerman === studyEnglish || studyChinese === studyEnglish || studyGerman === studyChinese) {
+      throw new Error(label + ': illustration captions did not translate');
+    }
+    if (await page.locator('#studies .plate').count() !== 7) throw new Error(label + ': studies gallery incomplete');
+    const studyShots = page.locator('#studies img');
+    await studyShots.first().scrollIntoViewIfNeeded();
+    await page.locator('#studies .plate-hit').first().click();
+    await page.locator('#studyLightbox:not([hidden])').waitFor();
+    const shot = await page.locator('#studyLightboxImg').getAttribute('src');
+    if (!shot || !shot.includes('assets/studies/hv-battery-exploded.webp')) throw new Error(label + ': lightbox did not open the battery study');
+    if (!await page.locator('#protectedArea').isHidden()) throw new Error(label + ': lightbox revealed a register');
+    await page.keyboard.press('Escape');
+    await page.locator('#studyLightbox').waitFor({state: 'hidden'});
+
     for (const path of ['cv', 'projects', 'private']) {
-      await page.locator('[data-route="' + path + '"]').click();
+      await page.locator('[data-route="' + path + '"]').first().click();
       await page.locator('#dialog.show').waitFor({state: 'visible'});
       const card = await page.locator('.dialog-card').boundingBox();
       if (!card || card.x < -1 || card.y < -1 || card.x + card.width > width + 2 || card.y + card.height > height + 2) throw new Error(label + ': dialog does not fit');
@@ -117,7 +139,9 @@ try {
       if ((await page.content()).includes(marker)) throw new Error(label + ': plaintext stayed in the DOM after locking');
     }
     if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 2)) throw new Error(label + ': overflow');
-    if (requests.some((url) => url.includes('.webp'))) throw new Error(label + ': private image was fetched');
+    const privateAssets = ['present.webp', 'workshop.webp', 'team.webp', 'coach.webp', 'collab.webp', 'factory.webp', 'visit.webp'];
+    if (requests.some((url) => privateAssets.some((name) => url.includes(name)))) throw new Error(label + ': private image was fetched');
+    if (!requests.some((url) => url.includes('assets/studies/'))) throw new Error(label + ': public studies were not requested');
     if (secret && !requests.some((url) => url.includes('registers.enc.json'))) throw new Error(label + ': vault was not requested');
     if (errors.length) throw new Error(label + ': ' + errors.join(' ; '));
     await page.close();
