@@ -2,7 +2,7 @@ import {readFileSync} from 'node:fs';
 import {webcrypto} from 'node:crypto';
 import {dirname, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {decryptBytes, encryptBytes, republishVault, accessCodeForInstant, codeForIsoDate, shanghaiParts, AAD, DEFAULT_ITERATIONS} from '../scripts/private_vault.mjs';
+import {decryptBytes, encryptBytes, republishVault, resealSourceIfStale, accessCodeForInstant, codeForIsoDate, isoDateInShanghai, shanghaiParts, vaultPath, AAD, DEFAULT_ITERATIONS} from '../scripts/private_vault.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sampleCode = 'roundtrip-sample-code';
@@ -145,6 +145,13 @@ for (const bad of [
   if (opened) throw new Error('a non-today code opened the republished vault');
 }
 if (!sourcePlain.equals(republished.plain)) throw new Error('republish changed the register bytes');
+
+const vaultBytes = readFileSync(vaultPath);
+const shanghaiToday = isoDateInShanghai(new Date());
+if (real.sealedFor === shanghaiToday) {
+  if (resealSourceIfStale(new Date())) throw new Error('same-day reseal reported a change');
+  if (!readFileSync(vaultPath).equals(vaultBytes)) throw new Error('same-day reseal changed the vault bytes');
+}
 if (raw.length < 100000) throw new Error('committed vault is unexpectedly small');
 for (const marker of ['id="view-private"', 'id="view-cv"', 'const PASSWORD', 'cvHeroLead', 'sportsText']) {
   if (raw.includes(marker)) throw new Error('committed vault contains plaintext marker ' + marker);

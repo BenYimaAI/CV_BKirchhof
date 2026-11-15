@@ -7,7 +7,7 @@ on:
     - cron: '0 16 * * *'
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 concurrency:
@@ -24,6 +24,27 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Reseal the source vault when the Shanghai day has changed
+        run: node scripts/private_vault.mjs reseal-source-if-stale
+      - id: seal
+        name: Commit the resealed source vault
+        run: |
+          if git diff --quiet -- private/registers.enc.json; then
+            echo "Source vault is already sealed for the Shanghai day."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add private/registers.enc.json
+            git commit -m "Reseal the private registers for the Shanghai day."
+            git push origin HEAD:main
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Ask Pages to publish the resealed branch
+        if: steps.seal.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/pages/builds"
       - name: Seal the vault for the Shanghai day and prepare the public site
         run: python3 scripts/prepare_site.py public-site
       - uses: actions/configure-pages@v5
