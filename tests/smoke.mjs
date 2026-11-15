@@ -1,13 +1,17 @@
 import {chromium} from 'playwright';
 import {createServer} from 'node:http';
-import {readFileSync, existsSync} from 'node:fs';
 import {readFile} from 'node:fs/promises';
 import {extname, join, normalize, resolve, dirname, sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {accessCodeForInstant} from '../scripts/private_vault.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const site = resolve(repo, process.argv[2] || 'public-site');
-const secret = (process.env.CV_ACCESS_SECRET || (existsSync(resolve(repo, '.access-secret')) ? readFileSync(resolve(repo, '.access-secret'), 'utf8') : '')).trim();
+const now = new Date();
+const secret = accessCodeForInstant(now);
+const yesterday = accessCodeForInstant(new Date(now.getTime() - 86400000));
+const tomorrow = accessCodeForInstant(new Date(now.getTime() + 86400000));
+const spaced = secret.slice(0, 4) + ' ' + secret.slice(4);
 
 function start(root) {
   const types = {
@@ -54,10 +58,18 @@ const browser = await chromium.launch({headless: true});
 try {
   const indexSource = await fetch(origin).then((response) => response.text());
   const vaultSource = await fetch(origin + 'private/registers.enc.json').then((response) => response.text());
+  const gatewaySource = await fetch(origin + 'cv-access.js').then((response) => response.text());
   if (!indexSource.includes('id="gateway"') || !indexSource.includes('id="registerMount"')) throw new Error('public shell missing');
   if (indexSource.includes('id="view-private"') || indexSource.includes('const PASSWORD')) throw new Error('register markup is in the public html');
-  if (vaultSource.includes('id="view-private"') || vaultSource.includes('<h2')) throw new Error('vault file is not ciphertext');
-  if (secret && (indexSource.includes(secret) || vaultSource.includes(secret))) throw new Error('access code is in the built site');
+  if (vaultSource.includes('id="view-private"') || vaultSource.includes('<h2') || vaultSource.includes('"sealedFor"')) throw new Error('vault file is not a clean ciphertext');
+  for (const code of [secret, yesterday, tomorrow]) {
+    if (indexSource.includes(code) || vaultSource.includes(code) || gatewaySource.includes(code)) {
+      throw new Error('access code is in the built site');
+    }
+  }
+  for (const marker of ['Ben_', 'Asia/Shanghai', 'DDMMYYYY', 'sealedFor', 'Intl.DateTimeFormat']) {
+    if (indexSource.includes(marker) || gatewaySource.includes(marker)) throw new Error('gateway contains vault-seal logic');
+  }
 
   for (const [label, width, height] of [['small-phone', 320, 720], ['phone', 390, 844], ['tablet', 768, 1024], ['desktop', 1440, 900]]) {
     const page = await browser.newPage({viewport: {width, height}});
@@ -102,14 +114,14 @@ try {
       await page.locator('#dialog.show').waitFor({state: 'visible'});
       const card = await page.locator('.dialog-card').boundingBox();
       if (!card || card.x < -1 || card.y < -1 || card.x + card.width > width + 2 || card.y + card.height > height + 2) throw new Error(label + ': dialog does not fit');
-      await page.locator('#pwdInput').fill('not-the-access-code');
-      await page.locator('#openBtn').click();
-      await page.locator('#pwdError').filter({hasText: /.+/}).waitFor({timeout: 20000});
-      if (!await page.locator('#protectedArea').isHidden()) throw new Error(label + ': invalid code revealed a register');
-      if (await page.locator('#view-' + path).count()) throw new Error(label + ': invalid code injected a register');
-      if (!secret) {
-        await page.locator('#cancelBtn').click();
-        continue;
+      const rejected = [ 'not-the-access-code' ];
+      if (label === 'phone' && path === 'cv') rejected.push(yesterday, tomorrow, spaced);
+      for (const code of rejected) {
+        await page.locator('#pwdInput').fill(code);
+        await page.locator('#openBtn').click();
+        await page.locator('#pwdError').filter({hasText: /.+/}).waitFor({timeout: 20000});
+        if (!await page.locator('#protectedArea').isHidden()) throw new Error(label + ': rejected code revealed a register');
+        if (await page.locator('#view-' + path).count()) throw new Error(label + ': rejected code injected a register');
       }
       await page.locator('#pwdInput').fill(secret);
       await page.locator('#openBtn').click();
@@ -142,13 +154,13 @@ try {
     const privateAssets = ['present.webp', 'workshop.webp', 'team.webp', 'coach.webp', 'collab.webp', 'factory.webp', 'visit.webp'];
     if (requests.some((url) => privateAssets.some((name) => url.includes(name)))) throw new Error(label + ': private image was fetched');
     if (!requests.some((url) => url.includes('assets/studies/'))) throw new Error(label + ': public studies were not requested');
-    if (secret && !requests.some((url) => url.includes('registers.enc.json'))) throw new Error(label + ': vault was not requested');
+    if (!requests.some((url) => url.includes('registers.enc.json'))) throw new Error(label + ': vault was not requested');
     if (errors.length) throw new Error(label + ': ' + errors.join(' ; '));
     await page.close();
-    console.log(label + ' PASS' + (secret ? ' (unlock)' : ' (locked only)'));
+    console.log(label + ' PASS (unlock)');
   }
 } finally {
   await browser.close();
   await new Promise((resolvePromise) => server.close(resolvePromise));
 }
-console.log(secret ? 'smoke ok with unlock' : 'smoke ok without access code');
+console.log('smoke ok with the Shanghai-day code');

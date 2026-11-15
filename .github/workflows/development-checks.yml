@@ -15,15 +15,8 @@ jobs:
           node-version: '22'
       - name: Crypto round-trip
         run: node tests/vault-roundtrip.mjs
-      - name: Verify access secret when it is configured
-        env:
-          CV_ACCESS_SECRET: ${{ secrets.CV_ACCESS_SECRET }}
-        run: |
-          if [ -n "$CV_ACCESS_SECRET" ]; then
-            node scripts/private_vault.mjs verify
-          else
-            echo "CV_ACCESS_SECRET is not set; decrypt verification skipped."
-          fi
+      - name: Verify the sealed source vault
+        run: node scripts/private_vault.mjs verify
       - name: Build the public site
         run: python3 scripts/prepare_site.py public-site
       - name: Install browser-test runner
@@ -31,8 +24,6 @@ jobs:
           npm install --no-save --package-lock=false playwright@1.65.1
           npx playwright install --with-deps chromium
       - name: Run interactive smoke tests
-        env:
-          CV_ACCESS_SECRET: ${{ secrets.CV_ACCESS_SECRET }}
         run: node tests/smoke.mjs public-site
       - uses: actions/upload-artifact@v4
         if: always()

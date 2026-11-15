@@ -22,6 +22,4 @@ jobs:
           npm install --no-save --package-lock=false playwright@1.65.1
           npx playwright install --with-deps chromium
       - name: Smoke test the gateway and the gate
-        env:
-          CV_ACCESS_SECRET: ${{ secrets.CV_ACCESS_SECRET }}
         run: node tests/smoke.mjs public-site
