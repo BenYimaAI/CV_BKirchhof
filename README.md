@@ -27,7 +27,7 @@ GitHub Pages cannot check a password on the server. Hiding a section with JavaSc
 - Returning to the gateway removes the decrypted markup from the document.
 - The public gateway keeps working without the code, including the EN / DE / 中文 switch, the Tron 2.0 layout, and the component studies.
 
-The committed vault's `sealedFor` field is the Shanghai date that opens **that file**, written as `YYYY-MM-DD`. That field is not the access code. Every run of **GitHub Pages CV** decrypts the committed vault with the `sealedFor` date and writes a new ciphertext, sealed for the Shanghai date at deploy time, into `public-site/` only. A push to `main` does this. So does the schedule at 00:00 Asia/Shanghai, which is `0 16 * * *` UTC because Shanghai is UTC+8 all year. The schedule does not commit. GitHub can start a scheduled job late; until that job finishes, the live site still has the previous seal.
+The committed vault's `sealedFor` field is the Shanghai date that opens **that file**, written as `YYYY-MM-DD`. That field is not the access code. The Pages site is published from the `main` branch, so the live vault is this committed file. **GitHub Pages CV** runs on every push to `main` and at 00:00 Asia/Shanghai (`0 16 * * *` UTC; Shanghai is UTC+8 all year). When `sealedFor` is behind that Shanghai day, the job writes a new ciphertext, commits only `private/registers.enc.json`, and requests a Pages build. A same-day run does not commit again. GitHub can start the scheduled job late; until that build finishes, the site still has the previous seal. The job also uploads `public-site/`, which is the bundle served if the Pages source is the **GitHub Pages CV** workflow.
 
 `CV_ACCESS_SECRET` is not used. A missing or different Actions secret cannot change the code the site is sealed with.
 
@@ -65,10 +65,10 @@ The ciphertext replaces the registers in the current files and in the next Pages
 - `assets/fonts/` — self-hosted Outfit and IBM Plex Mono files, with their SIL Open Font License texts.
 - `cv-access.js` — language switch, access dialog, illustration lightbox, and WebCrypto decrypt.
 - `private/registers.enc.json` — ciphertext for the three registers.
-- `scripts/private_vault.mjs` — `encrypt`, `decrypt`, `verify`, and `write-public-vault`.
+- `scripts/private_vault.mjs` — `encrypt`, `decrypt`, `verify`, `reseal-source-if-stale`, and `write-public-vault`.
 - `scripts/prepare_site.py` — writes `public-site/` from that allowlist and reseals the vault for the current Shanghai day.
 - `tests/smoke.mjs` — gateway, illustration lightbox, rejected codes (including the previous and next Shanghai days), and unlock at 320, 390, 768, and 1440 CSS pixels. The test computes the day's code in the build. It does not read it from the bundle.
 
 ## Publication
 
-`main` is deployed by `.github/workflows/pages.yml` on every push and every day at 00:00 Asia/Shanghai (`0 16 * * *` UTC). The job uploads the `public-site/` directory, not the rest of the repository. The repository is public, so a committed file is public even when Pages does not copy it. The committed source vault stays sealed for its `sealedFor` date; only the uploaded bundle is resealed for the day of the deploy.
+`main` is published by GitHub Pages from the branch root, and `.github/workflows/pages.yml` reseals the committed vault at 00:00 Asia/Shanghai (`0 16 * * *` UTC) and on pushes whose vault is behind that day. The repository is public, so a committed file is public even when a Pages artifact omits it. `scripts/prepare_site.py` still writes an allowlisted `public-site/` bundle sealed for the day of the run.

@@ -170,6 +170,28 @@ export function decryptPayloadFile() {
   console.log('decrypted payload written to content/private/payload.json (gitignored)');
 }
 
+export function resealSourceIfStale(when = new Date()) {
+  const today = isoDateInShanghai(when);
+  const raw = readFileSync(vaultPath, 'utf8');
+  const vault = JSON.parse(raw);
+  if (vault.sealedFor === today) {
+    console.log('source vault already sealed for the Shanghai day');
+    return false;
+  }
+  const secret = codeForIsoDate(vault.sealedFor);
+  const plain = decryptBytes(vault, secret);
+  assertPayload(JSON.parse(plain.toString('utf8')));
+  const next = encryptClean(plain, codeForIsoDate(today));
+  next.sealedFor = today;
+  const packed = JSON.stringify(next);
+  if (packed.includes(codeForIsoDate(today)) || packed.includes(secret)) {
+    throw new Error('refusing to write a vault that contains the access code');
+  }
+  writeFileSync(vaultPath, packed);
+  console.log('resealed source vault for the Shanghai day');
+  return true;
+}
+
 export function republishVault(when = new Date()) {
   const {plain, secret} = readSourceVault();
   assertPayload(JSON.parse(plain.toString('utf8')));
@@ -306,6 +328,7 @@ function main() {
     if (cmd === 'encrypt') encryptPayloadFile();
     else if (cmd === 'decrypt') decryptPayloadFile();
     else if (cmd === 'verify') verifyVault();
+    else if (cmd === 'reseal-source-if-stale') resealSourceIfStale();
     else if (cmd === 'write-public-vault') {
       const dest = process.argv[3];
       if (!dest) {
@@ -313,7 +336,7 @@ function main() {
         return;
       }
       writePublicVault(dest);
-    } else fail('Usage: node scripts/private_vault.mjs encrypt|decrypt|verify|write-public-vault <dest>');
+    } else fail('Usage: node scripts/private_vault.mjs encrypt|decrypt|verify|reseal-source-if-stale|write-public-vault <dest>');
   } catch (error) {
     fail(error.message || 'vault command failed');
   }
