@@ -19,56 +19,44 @@ The gateway — language switch, register cards, and the email request — works
 
 GitHub Pages cannot check a password on the server. Hiding a section with JavaScript left the registers and the access code in the public HTML. The registers are encrypted instead, and only ciphertext is published.
 
-- `private/registers.enc.json` is AES-256-GCM ciphertext.
+- `private/registers.enc.json` is AES-256-GCM ciphertext for the source registers.
 - The key is PBKDF2-HMAC-SHA256 of the access code, 600,000 iterations, with a random salt and IV stored beside the ciphertext.
-- The access code is not in git, in `cv-access.js`, or in the Pages bundle. A wrong code fails the authentication tag, and the register markup is never inserted.
+- The access code is the prefix `Ben_` immediately followed by the Asia/Shanghai calendar date as eight digits, day then month then year (`Ben_` + `DDMMYYYY`). No spaces. The code is case-sensitive. A trailing newline is ignored because the dialog trims the ends of the field. Spaces inside the code fail.
+- Yesterday's code and tomorrow's code do not open the vault GitHub Pages is serving.
+- The browser does not know that scheme. It derives a key from the typed string and tries to decrypt. A wrong code fails the authentication tag, and the register markup is never inserted. The code is not in `cv-access.js` or in the Pages bundle.
 - Returning to the gateway removes the decrypted markup from the document.
-- The public gateway keeps working without the code, including the EN / DE / 中文 switch and the phone layout.
+- The public gateway keeps working without the code, including the EN / DE / 中文 switch, the Tron 2.0 layout, and the component studies.
 
-WebCrypto has no Argon2. PBKDF2 at the OWASP 2023 HMAC-SHA256 iteration count stays in the browser's native crypto instead of shipping a separate password hasher. A long random code is what makes an offline guess impractical. A short or common code is not enough, because anyone can download the ciphertext and try codes themselves.
+The committed vault's `sealedFor` field is the Shanghai date that opens **that file**, written as `YYYY-MM-DD`. That field is not the access code. Every run of **GitHub Pages CV** decrypts the committed vault with the `sealedFor` date and writes a new ciphertext, sealed for the Shanghai date at deploy time, into `public-site/` only. A push to `main` does this. So does the schedule at 00:00 Asia/Shanghai, which is `0 16 * * *` UTC because Shanghai is UTC+8 all year. The schedule does not commit. GitHub can start a scheduled job late; until that job finishes, the live site still has the previous seal.
 
-This is one shared code, not a user account. Anyone who knows the code can decrypt a copy of the vault. Rotating the code and republishing the ciphertext is how access is withdrawn. It does not revoke a single visitor while leaving the old code valid.
+`CV_ACCESS_SECRET` is not used. A missing or different Actions secret cannot change the code the site is sealed with.
 
-A host with real authentication, such as Cloudflare Access, can issue per-person logins and revoke one person without re-encrypting. That needs another account, DNS in front of the site, and a home for the private HTML that is not this public repository. Encryption keeps the current Pages URL and the single code visitors already request by email, and it stops the registers shipping as plaintext.
+This code is easy to guess. It is still AES-256-GCM: the published files do not contain the registers or the code, and a mismatch fails the authentication tag. Anyone who knows the day's code can decrypt a copy of that day's vault. The next day's deploy is how that copy stops matching the live site. It does not revoke someone who already saved the plaintext.
 
-### Set the access code
+WebCrypto has no Argon2. PBKDF2 at the OWASP 2023 HMAC-SHA256 iteration count stays in the browser's native crypto instead of shipping a separate password hasher.
 
-Create an Actions secret named `CV_ACCESS_SECRET`.
+A host with real authentication, such as Cloudflare Access, can issue per-person logins and revoke one person without re-encrypting. That needs another account, DNS in front of the site, and a home for the private HTML that is not this public repository.
 
-In GitHub: **Settings → Secrets and variables → Actions → New repository secret**.
-
-Or, from a checkout, with the GitHub CLI:
-
-```bash
-gh secret set CV_ACCESS_SECRET --repo BenYimaAI/CV_BKirchhof
-```
-
-Paste the code and nothing else. A trailing newline is ignored. The code is case-sensitive.
-
-The Pages workflow checks the secret when it is set, and fails the deploy if that value no longer decrypts the vault. It does not write the secret into the site. If the secret is missing, ciphertext still deploys and the check is skipped.
-
-The code that opens the vault currently in git was created when encryption was added and given to the repository owner outside the repository. Store that value as `CV_ACCESS_SECRET`, confirm a register opens, then rotate it to a code you choose so the bootstrap value is not the long-term secret.
-
-### Rotate the code or edit a register
+### Edit a register
 
 Plaintext is only the gitignored working file `content/private/payload.json`, created on a machine where you decrypt.
 
 ```bash
-CV_ACCESS_SECRET='current-code' node scripts/private_vault.mjs decrypt
+node scripts/private_vault.mjs decrypt
 # edit content/private/payload.json
 # views.cv, views.projects, and views.private are the register HTML.
 # translations.en, translations.de, and translations.zh are the register strings.
-CV_ACCESS_SECRET='new-code' node scripts/private_vault.mjs encrypt
-CV_ACCESS_SECRET='new-code' node scripts/private_vault.mjs verify
+node scripts/private_vault.mjs encrypt
+node scripts/private_vault.mjs verify
 ```
 
-Commit `private/registers.enc.json` only. Do not commit `content/private/` or the access code. Update `CV_ACCESS_SECRET` to the new code, then run **GitHub Pages CV** (a push to `main` runs it).
+`encrypt` seals the source for the current Shanghai day and sets `sealedFor` to that date. Commit `private/registers.enc.json` only. Do not commit `content/private/` or an access code. Pushing to `main` republishes a vault sealed for that same day.
 
-`verify` decrypts the vault with the secret and fails if register text has landed back in `index.html` or `cv-access.js`.
+`verify` decrypts the source with its `sealedFor` date and fails if register text or the access code has landed in `index.html` or `cv-access.js`.
 
 ### What encryption does not erase
 
-The ciphertext replaces the registers in the current files and in the next Pages deploy. Git history, the deployment that is live until this change ships, and existing Actions artifacts still have the old plaintext. Those copies are listed on the pull request that introduced the vault. Removing them means a history rewrite and a force-push, which this change does not do, plus deleting the old artifacts. Treat the previous access code as public.
+The ciphertext replaces the registers in the current files and in the next Pages deploy. Git history, the deployment that is live until this change ships, and existing Actions artifacts still have older copies. Those copies are listed on the pull request that introduced the vault. Removing them means a history rewrite and a force-push, which this change does not do, plus deleting the old artifacts. The retired literal that used to sit in the page JavaScript is already public. The bootstrap code that sealed the first ciphertext is not in git; hyphens in that code were part of the string, and spaces around them do not open it.
 
 ## Layout
 
@@ -77,10 +65,10 @@ The ciphertext replaces the registers in the current files and in the next Pages
 - `assets/fonts/` — self-hosted Outfit and IBM Plex Mono files, with their SIL Open Font License texts.
 - `cv-access.js` — language switch, access dialog, illustration lightbox, and WebCrypto decrypt.
 - `private/registers.enc.json` — ciphertext for the three registers.
-- `scripts/private_vault.mjs` — `encrypt`, `decrypt`, and `verify`.
-- `scripts/prepare_site.py` — writes `public-site/` from that allowlist for GitHub Pages.
-- `tests/smoke.mjs` — gateway, illustration lightbox, a rejected code, and, when `CV_ACCESS_SECRET` or `.access-secret` is present, unlock at 320, 390, 768, and 1440 CSS pixels.
+- `scripts/private_vault.mjs` — `encrypt`, `decrypt`, `verify`, and `write-public-vault`.
+- `scripts/prepare_site.py` — writes `public-site/` from that allowlist and reseals the vault for the current Shanghai day.
+- `tests/smoke.mjs` — gateway, illustration lightbox, rejected codes (including the previous and next Shanghai days), and unlock at 320, 390, 768, and 1440 CSS pixels. The test computes the day's code in the build. It does not read it from the bundle.
 
 ## Publication
 
-`main` is deployed by `.github/workflows/pages.yml`. The job uploads the `public-site/` directory, not the rest of the repository. The repository is public, so a committed file is public even when Pages does not copy it.
+`main` is deployed by `.github/workflows/pages.yml` on every push and every day at 00:00 Asia/Shanghai (`0 16 * * *` UTC). The job uploads the `public-site/` directory, not the rest of the repository. The repository is public, so a committed file is public even when Pages does not copy it. The committed source vault stays sealed for its `sealedFor` date; only the uploaded bundle is resealed for the day of the deploy.

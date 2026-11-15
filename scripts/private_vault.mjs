@@ -1,15 +1,16 @@
 /**
  * Password-based vault for the three private CV registers.
  *
- * The committed file private/registers.enc.json is AES-256-GCM ciphertext.
- * The key is PBKDF2-HMAC-SHA256 of the access code (600,000 iterations).
- * The access code is read from CV_ACCESS_SECRET and is never written to disk
- * by this tool except when the caller already stored it outside git.
+ * private/registers.enc.json is AES-256-GCM ciphertext. Its sealedFor field
+ * is the Asia/Shanghai calendar date (YYYY-MM-DD) that opens this source
+ * file. It is not the access code. GitHub Pages decrypts that source and
+ * writes a new ciphertext for the Shanghai date at deploy time. The browser
+ * only derives a key from the typed string. A wrong string fails the
+ * authentication tag. The access code is never stored in the vault.
  *
  * WebCrypto does not implement Argon2. PBKDF2 stays inside Node's crypto and
  * the browser's native WebCrypto, with the OWASP 2023 iteration count for
- * HMAC-SHA256. A future human-chosen passphrase is what the iteration count
- * is there to slow down.
+ * HMAC-SHA256.
  */
 import {createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes} from 'node:crypto';
 import {readFileSync, writeFileSync, mkdirSync, existsSync} from 'node:fs';
@@ -21,10 +22,51 @@ export const KDF = 'PBKDF2-SHA-256';
 export const DEFAULT_ITERATIONS = 600_000;
 export const MIN_ITERATIONS = 100_000;
 export const MAX_ITERATIONS = 2_000_000;
+export const CODE_PREFIX = 'Ben_';
+
+const shanghaiFormatter = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  calendar: 'gregory',
+  numberingSystem: 'latn'
+});
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const vaultPath = resolve(root, 'private/registers.enc.json');
 export const payloadPath = resolve(root, 'content/private/payload.json');
+
+export function shanghaiParts(date = new Date()) {
+  const parts = {};
+  for (const part of shanghaiFormatter.formatToParts(date)) {
+    if (part.type === 'year' || part.type === 'month' || part.type === 'day') parts[part.type] = part.value;
+  }
+  if (!parts.year || !parts.month || !parts.day) throw new Error('Asia/Shanghai date unavailable');
+  return parts;
+}
+
+export function isoDateInShanghai(date = new Date()) {
+  const parts = shanghaiParts(date);
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+export function codeForIsoDate(iso) {
+  if (typeof iso !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    throw new Error('sealedFor is not a Shanghai calendar date');
+  }
+  const [year, month, day] = iso.split('-');
+  const probe = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), 4, 0, 0));
+  const parts = shanghaiParts(probe);
+  if (parts.year !== year || parts.month !== month || parts.day !== day) {
+    throw new Error('sealedFor is not a real calendar date');
+  }
+  return `${CODE_PREFIX}${day}${month}${year}`;
+}
+
+export function accessCodeForInstant(date = new Date()) {
+  return codeForIsoDate(isoDateInShanghai(date));
+}
 
 export function encryptBytes(plain, secret, iterations = DEFAULT_ITERATIONS) {
   if (!secret) throw new Error('missing access code');
@@ -50,6 +92,14 @@ export function encryptBytes(plain, secret, iterations = DEFAULT_ITERATIONS) {
   };
 }
 
+function encryptClean(plain, secret) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const vault = encryptBytes(plain, secret);
+    if (!JSON.stringify(vault).includes(secret)) return vault;
+  }
+  throw new Error('refusing to write a vault that contains the access code');
+}
+
 export function decryptBytes(vault, secret) {
   if (!secret) throw new Error('missing access code');
   if (!vault || vault.version !== 1 || vault.kdf !== KDF || vault.aad !== AAD) {
@@ -72,10 +122,6 @@ export function decryptBytes(vault, secret) {
   return Buffer.concat([decipher.update(body), decipher.final()]);
 }
 
-export function readSecret() {
-  return (process.env.CV_ACCESS_SECRET || '').trim();
-}
-
 function fail(message) {
   console.error(message);
   process.exitCode = 1;
@@ -93,24 +139,95 @@ function assertPayload(payload) {
   }
 }
 
-export function encryptPayloadFile(secret) {
+export function readSourceVault() {
+  const vault = JSON.parse(readFileSync(vaultPath, 'utf8'));
+  const secret = codeForIsoDate(vault.sealedFor);
+  return {vault, secret, plain: decryptBytes(vault, secret)};
+}
+
+export function encryptPayloadFile(when = new Date()) {
   if (!existsSync(payloadPath)) throw new Error('missing ' + payloadPath + ' (decrypt first, then edit)');
   const payload = JSON.parse(readFileSync(payloadPath, 'utf8'));
   assertPayload(payload);
   const plain = Buffer.from(JSON.stringify(payload), 'utf8');
-  const vault = encryptBytes(plain, secret);
+  const iso = isoDateInShanghai(when);
+  const vault = encryptClean(plain, codeForIsoDate(iso));
+  vault.sealedFor = iso;
+  if (JSON.stringify(vault).includes(codeForIsoDate(iso))) {
+    throw new Error('refusing to write a vault that contains the access code');
+  }
   mkdirSync(dirname(vaultPath), {recursive: true});
   writeFileSync(vaultPath, JSON.stringify(vault));
   console.log('encrypted registers written to private/registers.enc.json');
 }
 
-export function decryptPayloadFile(secret) {
-  const vault = JSON.parse(readFileSync(vaultPath, 'utf8'));
-  const payload = JSON.parse(decryptBytes(vault, secret).toString('utf8'));
+export function decryptPayloadFile() {
+  const {plain} = readSourceVault();
+  const payload = JSON.parse(plain.toString('utf8'));
   assertPayload(payload);
   mkdirSync(dirname(payloadPath), {recursive: true});
   writeFileSync(payloadPath, JSON.stringify(payload, null, 2), {mode: 0o600});
   console.log('decrypted payload written to content/private/payload.json (gitignored)');
+}
+
+export function republishVault(when = new Date()) {
+  const {plain, secret} = readSourceVault();
+  assertPayload(JSON.parse(plain.toString('utf8')));
+  const todayCode = accessCodeForInstant(when);
+  const published = encryptClean(plain, todayCode);
+  const packed = JSON.stringify(published);
+  if (packed.includes(todayCode) || packed.includes(secret) || packed.includes('"sealedFor"')) {
+    throw new Error('public vault is not clean');
+  }
+  return {published, plain};
+}
+
+export function writePublicVault(destPath, when = new Date()) {
+  const {published, plain} = republishVault(when);
+  const dest = resolve(destPath);
+  mkdirSync(dirname(dest), {recursive: true});
+  writeFileSync(dest, JSON.stringify(published));
+  const site = dirname(dirname(dest));
+  const today = accessCodeForInstant(when);
+  const neighbors = [
+    accessCodeForInstant(new Date(when.getTime() - 86400000)),
+    accessCodeForInstant(new Date(when.getTime() + 86400000))
+  ];
+  for (const rel of ['index.html', 'cv-access.js', 'private/registers.enc.json']) {
+    const file = resolve(site, rel);
+    if (!existsSync(file)) throw new Error('public bundle is missing ' + rel);
+    const text = readFileSync(file, 'utf8');
+    if (text.includes(today) || neighbors.some((code) => text.includes(code))) {
+      throw new Error('access code appears in the public bundle');
+    }
+    if (rel.endsWith('.js') || rel.endsWith('.html')) {
+      for (const marker of ['Ben_', 'Asia/Shanghai', 'DDMMYYYY', 'sealedFor', 'Intl.DateTimeFormat']) {
+        if (text.includes(marker)) throw new Error('public gateway contains vault-seal logic');
+      }
+    }
+  }
+  const opened = decryptBytes(published, today);
+  if (!opened.equals(plain)) throw new Error('public vault did not round-trip');
+  for (const bad of neighbors) {
+    let openedNeighbor = false;
+    try {
+      decryptBytes(published, bad);
+      openedNeighbor = true;
+    } catch {
+      openedNeighbor = false;
+    }
+    if (openedNeighbor) throw new Error('an adjacent Shanghai day opened the public vault');
+  }
+  const spaced = `${today.slice(0, CODE_PREFIX.length)} ${today.slice(CODE_PREFIX.length)}`;
+  let openedSpaced = false;
+  try {
+    decryptBytes(published, spaced);
+    openedSpaced = true;
+  } catch {
+    openedSpaced = false;
+  }
+  if (openedSpaced) throw new Error('a spaced code opened the public vault');
+  console.log('public vault sealed for the current Asia/Shanghai day');
 }
 
 const PUBLIC_VALUE_FLOOR = 12;
@@ -159,42 +276,44 @@ function publicValuesFromIndex(indexHtml) {
   return values;
 }
 
-export function verifyVault(secret) {
+export function verifyVault(when = new Date()) {
   const indexPath = resolve(root, 'index.html');
   const indexHtml = readFileSync(indexPath, 'utf8');
-  const vault = JSON.parse(readFileSync(vaultPath, 'utf8'));
-  let payload;
-  try {
-    payload = JSON.parse(decryptBytes(vault, secret).toString('utf8'));
-  } catch {
-    throw new Error('decryption failed; CV_ACCESS_SECRET does not open private/registers.enc.json');
-  }
+  const script = readFileSync(resolve(root, 'cv-access.js'), 'utf8');
+  const {vault, secret, plain} = readSourceVault();
+  const payload = JSON.parse(plain.toString('utf8'));
   assertPayload(payload);
-  const publicBlob = [
-    indexHtml,
-    readFileSync(resolve(root, 'cv-access.js'), 'utf8'),
-    readFileSync(vaultPath, 'utf8')
-  ].join('\n');
+  const publicBlob = [indexHtml, script, JSON.stringify(vault)].join('\n');
   const leaks = findLeaks(payload, publicBlob, publicValuesFromIndex(indexHtml));
   if (leaks.length) {
     throw new Error('private register text is still in the public site (' + leaks.slice(0, 8).join(', ') + ')');
   }
-  if (publicBlob.includes(secret)) throw new Error('access code appears in a public file');
+  const todayCode = accessCodeForInstant(when);
+  for (const code of new Set([secret, todayCode])) {
+    if (publicBlob.includes(code)) throw new Error('access code appears in a public file');
+  }
+  for (const marker of ['Ben_', 'Asia/Shanghai', 'DDMMYYYY', 'sealedFor', 'Intl.DateTimeFormat']) {
+    if (indexHtml.includes(marker) || script.includes(marker)) {
+      throw new Error('public gateway contains vault-seal logic');
+    }
+  }
   console.log('verified encrypted registers');
 }
 
 function main() {
   const cmd = process.argv[2];
-  const secret = readSecret();
-  if (!secret) {
-    fail('Set CV_ACCESS_SECRET to the access code. It is not stored in the repository.');
-    return;
-  }
   try {
-    if (cmd === 'encrypt') encryptPayloadFile(secret);
-    else if (cmd === 'decrypt') decryptPayloadFile(secret);
-    else if (cmd === 'verify') verifyVault(secret);
-    else fail('Usage: node scripts/private_vault.mjs encrypt|decrypt|verify');
+    if (cmd === 'encrypt') encryptPayloadFile();
+    else if (cmd === 'decrypt') decryptPayloadFile();
+    else if (cmd === 'verify') verifyVault();
+    else if (cmd === 'write-public-vault') {
+      const dest = process.argv[3];
+      if (!dest) {
+        fail('Usage: node scripts/private_vault.mjs write-public-vault <dest>');
+        return;
+      }
+      writePublicVault(dest);
+    } else fail('Usage: node scripts/private_vault.mjs encrypt|decrypt|verify|write-public-vault <dest>');
   } catch (error) {
     fail(error.message || 'vault command failed');
   }

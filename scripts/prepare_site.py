@@ -14,6 +14,7 @@ The battery study is the exploded view without the upper housing cover.
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -57,6 +58,15 @@ REQUIRED = (
     "cv-access.js",
     "PBKDF2",
 )
+# The gateway must stay a decryptor. The daily code is applied only while
+# sealing the Pages bundle, never by comparing a typed value in the browser.
+FRONTEND_FORBIDDEN = (
+    "Ben_",
+    "Asia/Shanghai",
+    "DDMMYYYY",
+    "sealedFor",
+    "Intl.DateTimeFormat",
+)
 STUDIES = (
     "assets/studies/m177-crankcase.webp",
     "assets/studies/m276-crankcase.webp",
@@ -85,6 +95,13 @@ def scan(label, text):
     for marker in FORBIDDEN:
         if marker in text:
             fail(f"{label} still contains private marker: {marker}")
+
+
+def scan_gateway(label, text):
+    scan(label, text)
+    for marker in FRONTEND_FORBIDDEN:
+        if marker in text:
+            fail(f"{label} contains vault-seal logic: {marker}")
 
 
 def output_dir(raw):
@@ -125,8 +142,10 @@ def main():
         fail("Illustration allowlist does not match index.html: " + ", ".join(sorted(referenced.symmetric_difference(STUDIES))))
     if "04_" in index or "ohne_Deckel" in index or "mit_Deckel" in index:
         fail("index.html references a source battery filename instead of the published study")
-    scan("index.html", index)
-    scan("cv-access.js", script)
+    if '"sealedFor"' not in vault:
+        fail("Source vault is missing sealedFor, so Pages cannot open it")
+    scan_gateway("index.html", index)
+    scan_gateway("cv-access.js", script)
     scan("private/registers.enc.json", vault)
 
     if out.exists():
@@ -136,6 +155,11 @@ def main():
     (out / "cv-access.js").write_text(script, encoding="utf-8")
     (out / "private" / "registers.enc.json").write_text(vault, encoding="utf-8")
     (out / ".nojekyll").touch()
+    subprocess.run(
+        ["node", str(ROOT / "scripts" / "private_vault.mjs"), "write-public-vault", str(out / "private" / "registers.enc.json")],
+        check=True,
+        cwd=ROOT,
+    )
     for rel in STUDIES + FONTS:
         src = ROOT / rel
         if not src.is_file() or src.stat().st_size < 40:
@@ -149,7 +173,13 @@ def main():
         if path.is_file():
             published.append(path.relative_to(out).as_posix())
             if path.suffix in {".html", ".js", ".json", ".txt", ".md"} or path.name == ".nojekyll":
-                scan(path.relative_to(out).as_posix(), path.read_text(encoding="utf-8"))
+                text = path.read_text(encoding="utf-8")
+                rel = path.relative_to(out).as_posix()
+                scan(rel, text)
+                if path.suffix in {".html", ".js"}:
+                    scan_gateway(rel, text)
+                if rel == "private/registers.enc.json" and '"sealedFor"' in text:
+                    fail("public vault still carries the source seal date")
     expected = {"index.html", "cv-access.js", "private/registers.enc.json", ".nojekyll", *STUDIES, *FONTS}
     if set(published) != expected:
         fail("Public bundle has unexpected files: " + ", ".join(sorted(published)))
