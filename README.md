@@ -72,12 +72,14 @@ The ciphertext replaces the registers in the current files and in the next Pages
 
 ## Layout
 
-- `index.html` — public gateway. No register bodies and no access code.
-- `cv-access.js` — language switch, access dialog, and WebCrypto decrypt.
+- `index.html` — public gateway and the illustrated component studies. No register bodies and no access code.
+- `assets/studies/` — stylized personal illustrations used on the public page. They are not official Mercedes-Benz artwork. The high-voltage battery image is the exploded view without the upper housing cover.
+- `assets/fonts/` — self-hosted Outfit and IBM Plex Mono files, with their SIL Open Font License texts.
+- `cv-access.js` — language switch, access dialog, illustration lightbox, and WebCrypto decrypt.
 - `private/registers.enc.json` — ciphertext for the three registers.
 - `scripts/private_vault.mjs` — `encrypt`, `decrypt`, and `verify`.
 - `scripts/prepare_site.py` — writes `public-site/` from that allowlist for GitHub Pages.
-- `tests/smoke.mjs` — gateway, a rejected code, and, when `CV_ACCESS_SECRET` or `.access-secret` is present, unlock at 320, 390, 768, and 1440 CSS pixels.
+- `tests/smoke.mjs` — gateway, illustration lightbox, a rejected code, and, when `CV_ACCESS_SECRET` or `.access-secret` is present, unlock at 320, 390, 768, and 1440 CSS pixels.
 
 ## Publication
 

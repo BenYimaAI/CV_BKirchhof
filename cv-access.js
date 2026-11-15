@@ -140,6 +140,15 @@
       const key = el.dataset.ph;
       if (translations[lang][key]) el.placeholder = translations[lang][key];
     });
+    document.querySelectorAll('[data-alt]').forEach((el) => {
+      const key = el.dataset.alt;
+      if (translations[lang][key]) el.alt = translations[lang][key];
+    });
+    document.querySelectorAll('[data-aria]').forEach((el) => {
+      const key = el.dataset.aria;
+      if (translations[lang][key]) el.setAttribute('aria-label', translations[lang][key]);
+    });
+    renderLightbox();
     document.querySelectorAll('[data-lang]').forEach((button) => {
       button.classList.toggle('active', button.dataset.lang === lang);
     });
@@ -254,6 +263,68 @@
       error.textContent = cause && cause.code === 'unavailable' ? t('pwdUnavailable') : t('pwdError');
       input.focus();
       input.select();
+    }
+  });
+
+  const lightbox = document.getElementById('studyLightbox');
+  const lightboxImg = document.getElementById('studyLightboxImg');
+  const lightboxTitle = document.getElementById('studyLightboxTitle');
+  const lightboxText = document.getElementById('studyLightboxText');
+  const lightboxClose = document.getElementById('studyLightboxClose');
+  let lightboxFocus = null;
+
+  function renderLightbox() {
+    if (!lightbox || lightbox.hidden) return;
+    const titleKey = lightbox.dataset.titleKey;
+    const textKey = lightbox.dataset.textKey;
+    const altKey = lightbox.dataset.altKey;
+    if (titleKey && lightboxTitle) lightboxTitle.textContent = t(titleKey);
+    if (textKey && lightboxText) lightboxText.textContent = t(textKey);
+    if (altKey && lightboxImg) lightboxImg.alt = t(altKey);
+  }
+
+  function openStudy(button) {
+    if (!lightbox || !button || dialog.classList.contains('show')) return;
+    lightboxFocus = button;
+    lightbox.dataset.titleKey = button.dataset.titleKey || '';
+    lightbox.dataset.textKey = button.dataset.textKey || '';
+    lightbox.dataset.altKey = button.dataset.altKey || '';
+    if (lightboxImg) lightboxImg.src = button.dataset.src || '';
+    lightbox.hidden = false;
+    renderLightbox();
+    if (lightboxClose) lightboxClose.focus();
+  }
+
+  function closeStudy() {
+    if (!lightbox || lightbox.hidden) return;
+    lightbox.hidden = true;
+    if (lightboxImg) {
+      lightboxImg.removeAttribute('src');
+      lightboxImg.alt = '';
+    }
+    const back = lightboxFocus;
+    lightboxFocus = null;
+    if (back && back.focus) back.focus();
+  }
+
+  document.querySelectorAll('.plate-hit').forEach((button) => {
+    button.addEventListener('click', () => openStudy(button));
+  });
+  if (lightboxClose) lightboxClose.addEventListener('click', closeStudy);
+  if (lightbox) {
+    lightbox.addEventListener('click', (event) => {
+      if (event.target === lightbox) closeStudy();
+    });
+  }
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    if (lightbox && !lightbox.hidden) {
+      closeStudy();
+      return;
+    }
+    if (dialog.classList.contains('show')) {
+      closeDialog();
+      if (returnFocus && returnFocus.focus) returnFocus.focus();
     }
   });
 
